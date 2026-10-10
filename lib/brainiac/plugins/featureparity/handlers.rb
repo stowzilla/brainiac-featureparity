@@ -13,7 +13,8 @@ module Brainiac
         # @return [Array<Integer, String>] HTTP status code and JSON response body
         def self.handle_work_started(payload)
           context = extract_work_context(payload)
-          LOG.info "[FeatureParity] Work started on requirement: #{context[:slug]}"
+          fp_env = extract_fp_environment(payload)
+          LOG.info "[FeatureParity] Work started on requirement: #{context[:slug]} (env: #{fp_env[:environment]})"
 
           # Validate we have an agent to dispatch
           agent_name = context[:assigned_agent]
@@ -34,17 +35,19 @@ module Brainiac
           existing_work_item = find_work_item_by_fp_requirement(context[:slug])
           if existing_work_item
             LOG.info "[FeatureParity] Found existing work item for #{context[:slug]}: #{existing_work_item['id']}"
-            return dispatch_agent_for_work(existing_work_item, context, project_config)
+            # Update FP env in case it changed (e.g., moved from dev to prod)
+            update_work_item_fp_env(existing_work_item["id"], fp_env) if fp_env[:api_base_url]
+            return dispatch_agent_for_work(existing_work_item, context, project_config, fp_env)
           end
 
           # Create worktree and new work item
           worktree_info = create_worktree_for_requirement(context, project_config)
           return [200, { status: "error", reason: "worktree creation failed" }.to_json] unless worktree_info
 
-          work_item_id = register_fp_work_item(worktree_info, context, agent_name)
+          work_item_id = register_fp_work_item(worktree_info, context, agent_name, fp_env)
           work_item = find_work_item_by_id(work_item_id)
 
-          dispatch_agent_for_work(work_item, context, project_config)
+          dispatch_agent_for_work(work_item, context, project_config, fp_env)
         end
 
         # Handle requirement.change_rejected webhook.
@@ -54,7 +57,8 @@ module Brainiac
         # @return [Array<Integer, String>] HTTP status code and JSON response body
         def self.handle_change_rejected(payload)
           context = extract_rejection_context(payload)
-          LOG.info "[FeatureParity] Change rejected: #{context[:slug]} by #{context[:actor]}"
+          fp_env = extract_fp_environment(payload)
+          LOG.info "[FeatureParity] Change rejected: #{context[:slug]} by #{context[:actor]} (env: #{fp_env[:environment]})"
 
           # Try to find the work item based on source
           work_item = find_work_item_from_source(context[:source_type], context[:source_url])
@@ -67,7 +71,10 @@ module Brainiac
           validation = validate_work_item(work_item)
           return validation if validation
 
-          dispatch_agent_for_rejection(work_item, context)
+          # Update FP env in case it changed
+          update_work_item_fp_env(work_item["id"], fp_env) if fp_env[:api_base_url]
+
+          dispatch_agent_for_rejection(work_item, context, fp_env)
         end
 
         # Extract context from work_started payload.
@@ -84,6 +91,21 @@ module Brainiac
             assigned_agent: data["assigned_agent"] || data["agent"],
             priority: data["priority"],
             tags: data["tags"] || []
+          }
+        end
+
+        # Extract FP environment info from webhook metadata.
+        # This is used to tell agents which FP instance to talk to.
+        #
+        # @param payload [Hash] The webhook payload
+        # @return [Hash] Environment info: { environment:, api_base_url:, ephemeral: }
+        def self.extract_fp_environment(payload)
+          metadata = payload["metadata"] || {}
+
+          {
+            environment: metadata["environment"] || "prod",
+            api_base_url: metadata["api_base_url"],
+            ephemeral: metadata["ephemeral"] || false
           }
         end
 
@@ -156,30 +178,63 @@ module Brainiac
         end
 
         # Register a new work item with FP as the source.
-        def self.register_fp_work_item(worktree_info, context, agent_name)
+        def self.register_fp_work_item(worktree_info, context, agent_name, fp_env)
+          source_data = {
+            "slug" => context[:slug],
+            "title" => context[:title]
+          }
+
+          # Store FP environment info so agents know which instance to talk to
+          if fp_env[:api_base_url]
+            source_data["api_base_url"] = fp_env[:api_base_url]
+            source_data["environment"] = fp_env[:environment]
+            source_data["ephemeral"] = fp_env[:ephemeral]
+          end
+
           register_work_item(
             branch: worktree_info[:branch],
             worktree: worktree_info[:worktree],
             project: context[:project_key],
             agent: agent_name,
             source: "featureparity",
-            source_data: {
-              "slug" => context[:slug],
-              "title" => context[:title]
-            }
+            source_data: source_data
           )
         end
 
+        # Update the FP environment info on an existing work item.
+        # Called when a webhook comes from a (possibly different) FP environment.
+        def self.update_work_item_fp_env(work_item_id, fp_env)
+          return unless fp_env[:api_base_url]
+
+          work_items = load_work_items
+          work_item = work_items[work_item_id]
+          return unless work_item
+
+          fp_source = work_item.dig("sources", "featureparity")
+          return unless fp_source
+
+          fp_source["api_base_url"] = fp_env[:api_base_url]
+          fp_source["environment"] = fp_env[:environment]
+          fp_source["ephemeral"] = fp_env[:ephemeral]
+
+          save_work_items(work_items)
+          LOG.info "[FeatureParity] Updated work item #{work_item_id} with FP env: #{fp_env[:environment]}"
+        end
+
         # Dispatch agent for initial work on a requirement.
-        def self.dispatch_agent_for_work(work_item, context, project_config)
+        def self.dispatch_agent_for_work(work_item, context, project_config, fp_env)
           worktree = work_item["worktree"]
           agent_name = work_item["agent"]
 
-          prompt = build_work_prompt(context, worktree, agent_name)
+          # Get FP env from work item if not provided in current webhook
+          fp_env = get_fp_env_from_work_item(work_item) if fp_env[:api_base_url].nil?
+
+          prompt = build_work_prompt(context, worktree, agent_name, fp_env)
           session_key = "fp-work-#{context[:slug]}-#{Time.now.to_i}"
           log_file = log_file_for("fp-work", context[:slug])
 
-          LOG.info "[FeatureParity] Dispatching #{agent_name} to implement requirement #{context[:slug]}"
+          LOG.info "[FeatureParity] Dispatching #{agent_name} to implement requirement #{context[:slug]} " \
+                   "(FP env: #{fp_env[:environment]})"
 
           Thread.new do
             run_agent(
@@ -199,7 +254,7 @@ module Brainiac
         end
 
         # Dispatch the agent to handle the rejection.
-        def self.dispatch_agent_for_rejection(work_item, context)
+        def self.dispatch_agent_for_rejection(work_item, context, fp_env)
           worktree = work_item["worktree"]
           agent_name = work_item["agent"]
           project_key = work_item["project"]
@@ -210,11 +265,15 @@ module Brainiac
             return [200, { status: "ignored", reason: "project not found" }.to_json]
           end
 
-          prompt = build_rejection_prompt(context, worktree, agent_name)
+          # Get FP env from work item if not provided in current webhook
+          fp_env = get_fp_env_from_work_item(work_item) if fp_env[:api_base_url].nil?
+
+          prompt = build_rejection_prompt(context, worktree, agent_name, fp_env)
           session_key = "fp-rejection-#{context[:slug]}-#{Time.now.to_i}"
           log_file = log_file_for("fp-rejection", context[:slug])
 
-          LOG.info "[FeatureParity] Dispatching #{agent_name} to handle rejection of #{context[:slug]}"
+          LOG.info "[FeatureParity] Dispatching #{agent_name} to handle rejection of #{context[:slug]} " \
+                   "(FP env: #{fp_env[:environment]})"
 
           Thread.new do
             run_agent(
@@ -233,8 +292,18 @@ module Brainiac
           [200, { status: "dispatched", agent: agent_name, work_item: work_item["id"], slug: context[:slug] }.to_json]
         end
 
+        # Get FP environment info from a work item's sources.
+        def self.get_fp_env_from_work_item(work_item)
+          fp_source = work_item.dig("sources", "featureparity") || {}
+          {
+            environment: fp_source["environment"] || "prod",
+            api_base_url: fp_source["api_base_url"],
+            ephemeral: fp_source["ephemeral"] || false
+          }
+        end
+
         # Build the prompt for initial work dispatch.
-        def self.build_work_prompt(context, worktree, agent_name)
+        def self.build_work_prompt(context, worktree, agent_name, fp_env)
           prompt_vars = {
             "REQUIREMENT_SLUG" => context[:slug],
             "REQUIREMENT_TITLE" => context[:title],
@@ -242,7 +311,10 @@ module Brainiac
             "REQUIREMENT_WHY" => context[:why] || "",
             "ACCEPTANCE_CRITERIA" => context[:acceptance_criteria] || "",
             "PROJECT_KEY" => context[:project_key],
-            "WORKTREE_PATH" => worktree
+            "WORKTREE_PATH" => worktree,
+            "FP_API_URL" => fp_env[:api_base_url] || "https://app.featureparity.dev",
+            "FP_ENVIRONMENT" => fp_env[:environment] || "prod",
+            "FP_EPHEMERAL" => fp_env[:ephemeral] ? "true" : "false"
           }
 
           brain_context = build_brain_context("FeatureParity requirement: #{context[:slug]}", agent_name: agent_name)
@@ -256,7 +328,7 @@ module Brainiac
         end
 
         # Build the prompt for the rejection dispatch.
-        def self.build_rejection_prompt(context, worktree, agent_name)
+        def self.build_rejection_prompt(context, worktree, agent_name, fp_env)
           prompt_vars = {
             "REQUIREMENT_SLUG" => context[:slug],
             "REQUIREMENT_TITLE" => context[:title],
@@ -267,7 +339,10 @@ module Brainiac
             "SOURCE_CONTEXT" => context[:source_context] || "",
             "CHANGE_KIND" => context[:kind],
             "CHANGE_DETAILS" => build_change_details({ "kind" => context[:kind] }),
-            "WORKTREE_PATH" => worktree
+            "WORKTREE_PATH" => worktree,
+            "FP_API_URL" => fp_env[:api_base_url] || "https://app.featureparity.dev",
+            "FP_ENVIRONMENT" => fp_env[:environment] || "prod",
+            "FP_EPHEMERAL" => fp_env[:ephemeral] ? "true" : "false"
           }
 
           brain_context = build_brain_context("FeatureParity rejection: #{context[:slug]}", agent_name: agent_name)
