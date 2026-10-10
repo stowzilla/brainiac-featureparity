@@ -27,6 +27,10 @@ Metrics/BlockLength:
     - "test/**/*"
     - "*.gemspec"
 
+Metrics/ClassLength:
+  Exclude:
+    - "test/**/*"
+
 Style/TopLevelMethodDefinition:
   Enabled: false
 

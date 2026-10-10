@@ -19,6 +19,7 @@ module Brainiac
         requirement.activated
         requirement.archived
         requirement.updated
+        requirement.work_started
         evidence.passing
         evidence.failing
         evidence.suspect
@@ -96,6 +97,8 @@ module Brainiac
           case event
           when "requirement.change_rejected"
             Handlers.handle_change_rejected(payload)
+          when "requirement.work_started"
+            Handlers.handle_work_started(payload)
           when "requirement.change_approved"
             # Could notify the agent that their change was approved
             LOG.info "[FeatureParity] Change approved: #{payload.dig('data', 'slug')}"
