@@ -1,0 +1,6 @@
+*.gem
+*.log
+/tmp/
+/pkg/
+/.bundle/
+/coverage/
