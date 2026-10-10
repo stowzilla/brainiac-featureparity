@@ -7,9 +7,19 @@ module Brainiac
       #
       # {
       #   "api_base_url": "https://app.featureparity.dev",
+      #   "environment": "prod",
+      #   "accept_environments": ["prod", "staging"],
       #   "authorized_users": [],
       #   "authorized_role_ids": []
       # }
+      #
+      # Environment matching:
+      # - `environment`: Which environment this brainiac instance represents (default: "prod")
+      # - `accept_environments`: Which environments' webhooks to process (default: same as environment)
+      #
+      # This prevents dev/ephemeral webhooks from triggering prod agents and vice versa.
+      # An ephemeral FP environment like "fizzy-1234" sends webhooks with that environment
+      # in the metadata — unless accept_environments includes "fizzy-1234", those are ignored.
       module Config
         CONFIG_FILE = File.join(BRAINIAC_DIR, "featureparity.json")
         @config = nil
@@ -24,7 +34,7 @@ module Brainiac
 
           def current
             reload_if_changed
-            @current ||= {}
+            @config || {}
           end
 
           def reload_if_changed
@@ -40,6 +50,34 @@ module Brainiac
 
           def api_base_url
             current["api_base_url"] || "https://app.featureparity.dev"
+          end
+
+          # Which environment this brainiac instance represents
+          def environment
+            current["environment"] || "prod"
+          end
+
+          # Which environments' webhooks to process. Defaults to just this environment.
+          # Use ["prod", "staging", "dev"] to accept webhooks from multiple environments.
+          # Use ["*"] to accept webhooks from any environment (useful for dev/testing).
+          def accept_environments
+            current["accept_environments"] || [environment]
+          end
+
+          # Check if this brainiac instance should process a webhook from the given environment.
+          # Returns true if:
+          # - accept_environments includes "*" (accept all)
+          # - accept_environments includes the webhook's environment
+          # - The webhook doesn't specify an environment (legacy/backward compatibility)
+          def should_accept_environment?(webhook_environment)
+            # No environment specified in webhook = backward compatibility, accept it
+            return true if webhook_environment.nil? || webhook_environment.to_s.strip.empty?
+
+            # Accept all environments
+            return true if accept_environments.include?("*")
+
+            # Check if this specific environment is accepted
+            accept_environments.include?(webhook_environment.to_s)
           end
 
           def authorized_users

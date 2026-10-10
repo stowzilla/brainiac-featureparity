@@ -39,6 +39,7 @@ module Brainiac
           setup_routes(app)
 
           LOG.info "[FeatureParity] Plugin registered (webhook: /featureparity)"
+          LOG.info "[FeatureParity] Accepting webhooks from environments: #{Config.accept_environments.join(', ')}"
         end
 
         private
@@ -64,7 +65,22 @@ module Brainiac
             end
 
             event = payload["event"]
-            LOG.info "[FeatureParity] Received event: #{event}"
+            metadata = payload["metadata"] || {}
+            webhook_env = metadata["environment"]
+
+            LOG.info "[FeatureParity] Received event: #{event} from environment: #{webhook_env || 'unspecified'}"
+
+            # Check environment before processing
+            unless Config.should_accept_environment?(webhook_env)
+              LOG.info "[FeatureParity] Ignoring webhook from environment '#{webhook_env}' " \
+                       "(accepting: #{Config.accept_environments.join(', ')})"
+              halt 200, {
+                status: "ignored",
+                reason: "environment mismatch",
+                webhook_environment: webhook_env,
+                accepted_environments: Config.accept_environments
+              }.to_json
+            end
 
             unless SUPPORTED_EVENTS.include?(event)
               LOG.info "[FeatureParity] Ignoring unsupported event: #{event}"
@@ -88,6 +104,8 @@ module Brainiac
             {
               enabled: true,
               api_base_url: Brainiac::Plugins::Featureparity::Config.api_base_url,
+              environment: Brainiac::Plugins::Featureparity::Config.environment,
+              accept_environments: Brainiac::Plugins::Featureparity::Config.accept_environments,
               supported_events: SUPPORTED_EVENTS
             }.to_json
           end
