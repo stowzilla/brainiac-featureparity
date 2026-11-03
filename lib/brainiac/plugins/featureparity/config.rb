@@ -6,7 +6,7 @@ module Brainiac
       # Config file at ~/.brainiac/featureparity.json
       #
       # {
-      #   "api_base_url": "https://app.featureparity.dev",
+      #   "api_base_url": "https://api.featureparity.dev",
       #   "environment": "prod",
       #   "accept_environments": ["prod", "staging"],
       #   "signing_secrets": ["whsec_..."],
@@ -66,7 +66,7 @@ module Brainiac
           end
 
           def api_base_url
-            current["api_base_url"] || "https://app.featureparity.dev"
+            current["api_base_url"] || "https://api.featureparity.dev"
           end
 
           # Which environment this brainiac instance represents

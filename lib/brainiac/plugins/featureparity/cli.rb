@@ -52,7 +52,7 @@ module Brainiac
             end
 
             config = {
-              "api_base_url" => "https://app.featureparity.dev",
+              "api_base_url" => "https://api.featureparity.dev",
               "signing_secrets" => [],
               "default_agent" => nil,
               "dispatch_gaps" => false,

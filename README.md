@@ -79,7 +79,7 @@ deliveries** in FeatureParity shows what was sent and what Brainiac answered.
 
 ```json
 {
-  "api_base_url": "https://app.featureparity.dev",
+  "api_base_url": "https://api.featureparity.dev",
   "environment": "prod",
   "accept_environments": ["prod"],
   "signing_secrets": ["whsec_..."],
