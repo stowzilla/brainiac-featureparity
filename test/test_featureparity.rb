@@ -5,7 +5,7 @@ require_relative "test_helper"
 class TestFeatureparity < Minitest::Test
   def test_version_is_set
     refute_nil Brainiac::Plugins::Featureparity::VERSION
-    assert_equal "0.0.1", Brainiac::Plugins::Featureparity::VERSION
+    assert_match(/\A\d+\.\d+\.\d+\z/, Brainiac::Plugins::Featureparity::VERSION)
   end
 
   def test_metadata_name

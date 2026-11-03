@@ -6,8 +6,9 @@ Gem::Specification.new do |s|
   s.name        = "brainiac-featureparity"
   s.version     = Brainiac::Plugins::Featureparity::VERSION
   s.summary     = "FeatureParity plugin for Brainiac"
-  s.description = "FeatureParity integration for Brainiac — routes requirement " \
-                  "rejections back to the agent who proposed them for rework."
+  s.description = "FeatureParity integration for Brainiac — starts the agent picked for " \
+                  "a requirement, answers comments that tag it, writes missing tests, " \
+                  "and reworks rejected proposals. Verifies FeatureParity's signed deliveries."
   s.authors     = ["Andy Davis"]
   s.homepage    = "https://github.com/stowzilla/brainiac-featureparity"
   s.license     = "MIT"

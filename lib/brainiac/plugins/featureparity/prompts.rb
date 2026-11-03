@@ -169,6 +169,73 @@ module Brainiac
           fp propose-change {{REQUIREMENT_SLUG}} --api-url {{FP_API_URL}} ...
           ```
         PROMPT
+
+        # Writing the tests a newly active requirement is missing (coverage.gap_detected).
+        GAP_DISPATCH = <<~PROMPT
+          ## FeatureParity: Write the Missing Tests
+
+          A requirement is now active on surfaces that have no tests yet.
+
+          ### Requirement
+          - **Slug:** `{{REQUIREMENT_SLUG}}`
+          - **Title:** {{REQUIREMENT_TITLE}}
+          - **Project:** {{PROJECT_KEY}}
+          - **Missing on:** {{MISSING_SURFACES}}
+
+          ### Acceptance Criteria
+          {{ACCEPTANCE_CRITERIA}}
+
+          ### FP Instance
+          - **API URL:** {{FP_API_URL}}
+          - **Environment:** {{FP_ENVIRONMENT}}
+
+          **CRITICAL:** All `fp` CLI commands MUST include `--api-url {{FP_API_URL}}`
+
+          ### Your Task
+
+          1. Read the requirement: `fp show {{REQUIREMENT_SLUG}} --project {{PROJECT_KEY}} --api-url {{FP_API_URL}}`
+          2. For each missing surface, write a test that exercises the acceptance criteria and mark it
+             `fp:{{REQUIREMENT_SLUG}}` (pin the surface, e.g. `fp:{{REQUIREMENT_SLUG}}@web`, when one test file serves several).
+          3. If the product doesn't do what the acceptance says, don't bend the test to fit: say so, and
+             leave a question on the requirement (`fp question {{REQUIREMENT_SLUG}} "..."`) for a human.
+          4. Run the tests, commit, push and open a PR.
+
+          Work in the worktree at: {{WORKTREE_PATH}}
+        PROMPT
+
+        # Answering a comment that tagged this agent (requirement.agent_mentioned).
+        MENTION_DISPATCH = <<~PROMPT
+          ## FeatureParity: You Were Tagged
+
+          {{COMMENT_AUTHOR}} tagged you ({{AGENT_NAME}}) in a comment on a requirement.
+
+          ### Requirement
+          - **Slug:** `{{REQUIREMENT_SLUG}}`
+          - **Title:** {{REQUIREMENT_TITLE}}
+          - **Project:** {{PROJECT_KEY}}
+
+          ### The Comment
+          {{COMMENT_BODY}}
+
+          ### FP Instance
+          - **API URL:** {{FP_API_URL}}
+          - **Environment:** {{FP_ENVIRONMENT}}
+
+          **CRITICAL:** All `fp` CLI commands MUST include `--api-url {{FP_API_URL}}`
+
+          ### Your Task
+
+          1. Read the requirement and its discussion:
+             `fp show {{REQUIREMENT_SLUG}} --project {{PROJECT_KEY}} --api-url {{FP_API_URL}}`
+             `fp comments {{REQUIREMENT_SLUG}} --project {{PROJECT_KEY}} --api-url {{FP_API_URL}}`
+          2. Do what was asked. If it is to re-check suspect tests, read the tests marked
+             `fp:{{REQUIREMENT_SLUG}}` against the current acceptance, fix them if they no longer prove it,
+             and re-report the evidence.
+          3. Reply on the requirement so they know what you did:
+             `fp comments {{REQUIREMENT_SLUG}} --project {{PROJECT_KEY}} --api-url {{FP_API_URL}} --body "..."`
+
+          Work in: {{WORKTREE_PATH}}
+        PROMPT
       end
     end
   end

@@ -9,9 +9,26 @@ module Brainiac
       #   "api_base_url": "https://app.featureparity.dev",
       #   "environment": "prod",
       #   "accept_environments": ["prod", "staging"],
+      #   "signing_secrets": ["whsec_..."],
+      #   "agents": { "galen": "Galen" },
+      #   "default_agent": "Galen",
+      #   "projects": { "feature-parity": "feature_parity" },
+      #   "dispatch_gaps": false,
+      #   "gap_agent": "Galen",
       #   "authorized_users": [],
       #   "authorized_role_ids": []
       # }
+      #
+      # signing_secrets: the whsec_ secrets FeatureParity showed you, one per project webhook
+      #   or agent wake-up address pointed here. When any are set, an unsigned or wrongly
+      #   signed delivery is refused (401). Leave empty only while setting up.
+      # agents: FeatureParity agent key name (or display name) → Brainiac agent name, for when
+      #   they differ. Otherwise the names are matched case-insensitively.
+      # default_agent: who takes "Start work" with no agent named.
+      # projects: FeatureParity project slug → key in ~/.brainiac/projects.json, for when they
+      #   differ. A project entry can also say "featureparity_project": "<slug>".
+      # dispatch_gaps: start an agent on coverage.gap_detected (write the missing tests).
+      #   Off by default: approving a batch of requirements reports a gap for each.
       #
       # Environment matching:
       # - `environment`: Which environment this brainiac instance represents (default: "prod")
@@ -78,6 +95,30 @@ module Brainiac
 
             # Check if this specific environment is accepted
             accept_environments.include?(webhook_environment.to_s)
+          end
+
+          def signing_secrets
+            Array(current["signing_secrets"]).map(&:to_s).reject(&:empty?)
+          end
+
+          def agent_map
+            (current["agents"] || {}).transform_keys { |k| k.to_s.downcase }
+          end
+
+          def default_agent
+            current["default_agent"]
+          end
+
+          def project_map
+            current["projects"] || {}
+          end
+
+          def dispatch_gaps?
+            current["dispatch_gaps"] == true
+          end
+
+          def gap_agent
+            current["gap_agent"] || default_agent
           end
 
           def authorized_users

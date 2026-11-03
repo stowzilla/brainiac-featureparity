@@ -4,6 +4,7 @@ require_relative "featureparity/version"
 require_relative "featureparity/metadata"
 require_relative "featureparity/config"
 require_relative "featureparity/prompts"
+require_relative "featureparity/signature"
 require_relative "featureparity/handlers"
 require_relative "featureparity/cli"
 
@@ -20,6 +21,7 @@ module Brainiac
         requirement.archived
         requirement.updated
         requirement.work_started
+        requirement.agent_mentioned
         evidence.passing
         evidence.failing
         evidence.suspect
@@ -53,48 +55,9 @@ module Brainiac
           app.post "/featureparity" do
             content_type :json
             request.body.rewind
-            payload_body = request.body.read
-
-            LOG.debug "[FeatureParity] Webhook received: #{payload_body.length} bytes" if LOG.debug?
-
-            begin
-              payload = JSON.parse(payload_body)
-            rescue JSON::ParserError => e
-              LOG.error "[FeatureParity] Invalid JSON: #{e.message}"
-              halt 400, { error: "Invalid JSON" }.to_json
-            end
-
-            event = payload["event"]
-            metadata = payload["metadata"] || {}
-            webhook_env = metadata["environment"]
-
-            LOG.info "[FeatureParity] Received event: #{event} from environment: #{webhook_env || 'unspecified'}"
-
-            # Check environment before processing
-            unless Config.should_accept_environment?(webhook_env)
-              LOG.info "[FeatureParity] Ignoring webhook from environment '#{webhook_env}' " \
-                       "(accepting: #{Config.accept_environments.join(', ')})"
-              halt 200, {
-                status: "ignored",
-                reason: "environment mismatch",
-                webhook_environment: webhook_env,
-                accepted_environments: Config.accept_environments
-              }.to_json
-            end
-
-            unless SUPPORTED_EVENTS.include?(event)
-              LOG.info "[FeatureParity] Ignoring unsupported event: #{event}"
-              halt 200, { status: "ignored", reason: "unsupported event" }.to_json
-            end
-
-            reload_projects!
-            reload_agent_registry!
-
-            status_code, body = dispatch_event(event, payload)
+            # self here is the Sinatra request, so reach the plugin by name.
+            status_code, body = Brainiac::Plugins::Featureparity.receive(request.body.read, request.env)
             halt status_code, body
-          rescue StandardError => e
-            LOG.error "[FeatureParity] Unhandled error: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
-            halt 500, { error: e.message }.to_json
           end
         end
 
@@ -111,33 +74,81 @@ module Brainiac
           end
         end
 
-        def dispatch_event(event, payload)
-          case event
-          when "requirement.change_rejected"
-            Handlers.handle_change_rejected(payload)
-          when "requirement.work_started"
-            Handlers.handle_work_started(payload)
-          when "requirement.change_approved"
-            # Could notify the agent that their change was approved
-            LOG.info "[FeatureParity] Change approved: #{payload.dig('data', 'slug')}"
-            [200, { status: "acknowledged", event: event }.to_json]
-          when "requirement.change_proposed", "requirement.removal_proposed"
-            # Proposals are created by agents, so we don't need to dispatch here
-            LOG.info "[FeatureParity] Proposal created: #{payload.dig('data', 'slug')}"
-            [200, { status: "acknowledged", event: event }.to_json]
-          when "evidence.failing"
-            # Could dispatch agent to investigate failing evidence
-            LOG.info "[FeatureParity] Evidence failing: #{payload.dig('data', 'slug')}"
-            [200, { status: "acknowledged", event: event }.to_json]
-          when "coverage.gap_detected"
-            # Could dispatch agent to write missing tests
-            LOG.info "[FeatureParity] Coverage gap: #{payload.dig('data', 'slug')}"
-            [200, { status: "acknowledged", event: event }.to_json]
-          else
-            # Other events are informational for now
-            LOG.info "[FeatureParity] Event received: #{event}"
-            [200, { status: "acknowledged", event: event }.to_json]
+        public
+
+        # Handle one delivery: verify it, drop a repeat, check where it came from, and hand
+        # it to its event's handler. Returns [status, json body].
+        def receive(raw_body, env)
+          LOG.debug "[FeatureParity] Webhook received: #{raw_body.length} bytes" if LOG.debug?
+          refusal = verification_refusal(raw_body, env)
+          return refusal if refusal
+
+          payload = JSON.parse(raw_body)
+          screened = screen(payload)
+          return screened if screened
+
+          reload_projects!
+          reload_agent_registry!
+          dispatch_event(payload["event"], payload)
+        rescue JSON::ParserError => e
+          LOG.error "[FeatureParity] Invalid JSON: #{e.message}"
+          [400, { error: "Invalid JSON" }.to_json]
+        rescue StandardError => e
+          LOG.error "[FeatureParity] Unhandled error: #{e.message}\n#{e.backtrace&.first(5)&.join("\n")}"
+          [500, { error: e.message }.to_json]
+        end
+
+        # Signed deliveries (Standard Webhooks): with secrets configured, anything that doesn't
+        # verify is refused before it is parsed. FeatureParity retries a delivery under the
+        # same webhook-id, so a repeat is acknowledged and dropped.
+        def verification_refusal(raw_body, env)
+          delivery_id = env["HTTP_WEBHOOK_ID"]
+          secrets = Config.signing_secrets
+          if secrets.empty?
+            LOG.warn "[FeatureParity] Accepting an unverified delivery: set signing_secrets in featureparity.json"
+          elsif !Signature.valid?(secrets: secrets, id: delivery_id, timestamp: env["HTTP_WEBHOOK_TIMESTAMP"],
+                                  signature: env["HTTP_WEBHOOK_SIGNATURE"], body: raw_body)
+            LOG.warn "[FeatureParity] Refused a delivery whose signature doesn't verify (id: #{delivery_id || 'none'})"
+            return [401, { error: "invalid signature" }.to_json]
           end
+          return [200, { status: "duplicate" }.to_json] if delivery_id && Dedupe.seen?("delivery:#{delivery_id}")
+
+          nil
+        end
+
+        # An event from an environment this instance doesn't serve, or one it doesn't handle.
+        def screen(payload)
+          event = payload["event"]
+          webhook_env = (payload["metadata"] || {})["environment"]
+          LOG.info "[FeatureParity] Received event: #{event} from environment: #{webhook_env || 'unspecified'}"
+
+          unless Config.should_accept_environment?(webhook_env)
+            LOG.info "[FeatureParity] Ignoring webhook from environment '#{webhook_env}' " \
+                     "(accepting: #{Config.accept_environments.join(', ')})"
+            return [200, { status: "ignored", reason: "environment mismatch", webhook_environment: webhook_env,
+                           accepted_environments: Config.accept_environments }.to_json]
+          end
+          return nil if SUPPORTED_EVENTS.include?(event)
+
+          LOG.info "[FeatureParity] Ignoring unsupported event: #{event}"
+          [200, { status: "ignored", reason: "unsupported event" }.to_json]
+        end
+
+        # The events that start an agent; every other supported event is acknowledged.
+        HANDLERS = {
+          "requirement.change_rejected" => :handle_change_rejected,
+          "requirement.work_started" => :handle_work_started,
+          "requirement.agent_mentioned" => :handle_agent_mentioned,
+          "coverage.gap_detected" => :handle_gap_detected
+        }.freeze
+
+        # Route an accepted event to its handler. Returns [status, json body].
+        def dispatch_event(event, payload)
+          handler = HANDLERS[event]
+          return Handlers.public_send(handler, payload) if handler
+
+          LOG.info "[FeatureParity] #{event}: #{payload.dig('data', 'slug')}"
+          [200, { status: "acknowledged", event: event }.to_json]
         end
       end
     end
