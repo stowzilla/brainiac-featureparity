@@ -61,8 +61,7 @@ module Brainiac
             }
 
             File.write(CONFIG_FILE, JSON.pretty_generate(config))
-            puts "Created config at #{CONFIG_FILE}"
-            puts
+            puts "Created config at #{CONFIG_FILE}\n\n"
             puts <<~STEPS
               Next steps (your public URL is whatever reaches this server, e.g. an ngrok tunnel):
               1. In FeatureParity, Agents & API keys: give each agent that runs here the wake-up address
