@@ -63,16 +63,15 @@ module Brainiac
             File.write(CONFIG_FILE, JSON.pretty_generate(config))
             puts "Created config at #{CONFIG_FILE}"
             puts
-            puts "Next steps (your public URL is whatever reaches this server, e.g. an ngrok tunnel):"
-            puts "1. Agents: in FeatureParity, open Agents & API keys and give each agent that runs here"
-            puts "   the wake-up address https://<your-public-url>/featureparity. Copy the signing secret"
-            puts "   it shows into \"signing_secrets\" in #{CONFIG_FILE}."
-            puts "2. Optional, for the whole project: Project Settings > Integrations > Add webhook with the"
-            puts "   same URL, provider 'generic', events such as 'Change rejected' or 'Coverage gap'."
-            puts "   Add its signing secret to \"signing_secrets\" too."
-            puts "3. Agent and project names are matched to ~/.brainiac (agents by name, projects by slug);"
-            puts "   map any that differ with \"agents\" and \"projects\" in the config."
-            puts
+            puts <<~STEPS
+              Next steps (your public URL is whatever reaches this server, e.g. an ngrok tunnel):
+              1. In FeatureParity, Agents & API keys: give each agent that runs here the wake-up address
+                 https://<your-public-url>/featureparity, and put the secret it shows in "signing_secrets".
+              2. Optional: Project Settings > Integrations > Add webhook, same URL, provider 'generic'
+                 ('Change rejected', 'Coverage gap'). Add its secret to "signing_secrets" too.
+              3. Agents match by name and projects by slug; map any that differ with "agents"/"projects".
+
+            STEPS
             puts "Run 'brainiac restart' to load the plugin."
           end
 
@@ -99,7 +98,8 @@ module Brainiac
               puts "API URL: #{config['api_base_url']}"
               secrets = Array(config["signing_secrets"]).size
               puts(secrets.zero? ? "Signatures: ✗ not checked (add signing_secrets)" : "Signatures: ✓ #{secrets} secret(s)")
-              puts "Coverage gaps: #{config['dispatch_gaps'] ? "dispatched to #{config['gap_agent'] || config['default_agent']}" : 'acknowledged only'}"
+              gap_agent = config["gap_agent"] || config["default_agent"]
+              puts "Coverage gaps: #{config['dispatch_gaps'] ? "dispatched to #{gap_agent}" : 'acknowledged only'}"
             else
               puts "Config: ✗ Not configured (run 'brainiac featureparity setup')"
             end
