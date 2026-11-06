@@ -14,7 +14,7 @@ module Brainiac
         end
 
         def self.description
-          "FeatureParity integration — routes requirement rejections back to agents for rework"
+          "FeatureParity integration — starts the agent you pick on a requirement, and answers its tags, gaps and rejections"
         end
       end
     end

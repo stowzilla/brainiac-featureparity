@@ -52,20 +52,25 @@ module Brainiac
             end
 
             config = {
-              "api_base_url" => "https://app.featureparity.dev",
+              "api_base_url" => "https://api.featureparity.dev",
+              "signing_secrets" => [],
+              "default_agent" => nil,
+              "dispatch_gaps" => false,
               "authorized_users" => [],
               "authorized_role_ids" => []
             }
 
             File.write(CONFIG_FILE, JSON.pretty_generate(config))
-            puts "Created config at #{CONFIG_FILE}"
-            puts
-            puts "Next steps:"
-            puts "1. In FeatureParity, go to Project Settings > Webhooks"
-            puts "2. Add a webhook with URL: https://your-ngrok.ngrok-free.app/featureparity"
-            puts "3. Select provider: 'generic'"
-            puts "4. Subscribe to events you want to handle (e.g., 'Change rejected')"
-            puts
+            puts "Created config at #{CONFIG_FILE}\n\n"
+            puts <<~STEPS
+              Next steps (your public URL is whatever reaches this server, e.g. an ngrok tunnel):
+              1. In FeatureParity, Agents & API keys: give each agent that runs here the wake-up address
+                 https://<your-public-url>/featureparity, and put the secret it shows in "signing_secrets".
+              2. Optional: Project Settings > Integrations > Add webhook, same URL, provider 'generic'
+                 ('Change rejected', 'Coverage gap'). Add its secret to "signing_secrets" too.
+              3. Agents match by name and projects by slug; map any that differ with "agents"/"projects".
+
+            STEPS
             puts "Run 'brainiac restart' to load the plugin."
           end
 
@@ -76,6 +81,8 @@ module Brainiac
             end
 
             config = JSON.parse(File.read(CONFIG_FILE))
+            # Never print the signing secrets themselves.
+            config["signing_secrets"] = Array(config["signing_secrets"]).map { |s| "#{s.to_s[0, 10]}…" }
             puts "FeatureParity Config (#{CONFIG_FILE}):"
             puts JSON.pretty_generate(config)
           end
@@ -88,6 +95,10 @@ module Brainiac
               config = JSON.parse(File.read(CONFIG_FILE))
               puts "Config: ✓ #{CONFIG_FILE}"
               puts "API URL: #{config['api_base_url']}"
+              secrets = Array(config["signing_secrets"]).size
+              puts(secrets.zero? ? "Signatures: ✗ not checked (add signing_secrets)" : "Signatures: ✓ #{secrets} secret(s)")
+              gap_agent = config["gap_agent"] || config["default_agent"]
+              puts "Coverage gaps: #{config['dispatch_gaps'] ? "dispatched to #{gap_agent}" : 'acknowledged only'}"
             else
               puts "Config: ✗ Not configured (run 'brainiac featureparity setup')"
             end
